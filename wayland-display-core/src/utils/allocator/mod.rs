@@ -485,6 +485,12 @@ pub fn gst_video_format_name_to_drm_fourcc(gst_format: String) -> Option<DrmFour
         "rgbx" => Some(DrmFourcc::Xbgr8888),
         "xbgr" => Some(DrmFourcc::Rgbx8888),
         "xrgb" => Some(DrmFourcc::Bgrx8888),
+        // 10-bit packed RGB for HDR (HEVC Main10). DRM AB30 (Abgr2101010) is the
+        // 10-bit format the GLES renderer can target (smithay fourcc_to_gl_formats
+        // -> RGB10_A2; see SUPPORTED_MEM_FORMATS_3). The gst<->DRM byte-order
+        // pairing mirrors the 8-bit reversal above and must be confirmed against
+        // the live NVIDIA EGL render formats on a Linux build.
+        "rgb10a2_le" => Some(DrmFourcc::Abgr2101010),
         _ => {
             tracing::warn!("Unsupported video format: {:?}", gst_format);
             None

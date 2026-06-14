@@ -435,7 +435,7 @@ impl ElementImpl for WaylandDisplaySrc {
             {
                 let cuda_caps = gst_video::VideoCapsBuilder::new()
                     .features([cuda::CAPS_FEATURE_MEMORY_CUDA_MEMORY])
-                    .format_list([VideoFormat::Bgra, VideoFormat::Rgba])
+                    .format_list(cuda_format_list())
                     .height_range(..i32::MAX)
                     .width_range(..i32::MAX)
                     .framerate_range(Fraction::new(1, 1)..Fraction::new(i32::MAX, 1))
@@ -536,7 +536,7 @@ impl BaseSrcImpl for WaylandDisplaySrc {
         {
             let cuda_caps = gst_video::VideoCapsBuilder::new()
                 .features([cuda::CAPS_FEATURE_MEMORY_CUDA_MEMORY])
-                .format_list([VideoFormat::Bgra, VideoFormat::Rgba])
+                .format_list(cuda_format_list())
                 .height_range(..i32::MAX)
                 .width_range(..i32::MAX)
                 .framerate_range(Fraction::new(1, 1)..Fraction::new(i32::MAX, 1))
@@ -869,6 +869,27 @@ impl PushSrcImpl for WaylandDisplaySrc {
         tracing::subscriber::with_default(subscriber, || {
             state.display.frame().map(CreateSuccess::NewBuffer)
         })
+    }
+}
+
+#[cfg(feature = "cuda")]
+fn cuda_format_list() -> Vec<VideoFormat> {
+    // Opt-in 10-bit (HDR / HEVC Main10) prototype: advertise a 10-bit packed RGB
+    // format only when GST_WAYLAND_DISPLAY_ENABLE_10BIT is set, so the default
+    // 8-bit SDR path is unchanged. Mirrors the GST_WAYLAND_DISPLAY_ADVERTISE_WL_DRM
+    // env toggle idiom in comp/mod.rs.
+    //
+    // NOTE: end-to-end 10-bit (EGL advertising AB30 as a render format, and
+    // RGB10A2 -> P010 conversion for nvenc Main10 in Wolf) must be validated on a
+    // Linux/NVIDIA build -- this cannot be compiled or run on macOS (smithay is
+    // Linux-only).
+    let enable_10bit = std::env::var("GST_WAYLAND_DISPLAY_ENABLE_10BIT")
+        .map(|v| matches!(v.trim(), "1" | "true" | "yes" | "on"))
+        .unwrap_or(false);
+    if enable_10bit {
+        vec![VideoFormat::Bgra, VideoFormat::Rgba, VideoFormat::Rgb10a2Le]
+    } else {
+        vec![VideoFormat::Bgra, VideoFormat::Rgba]
     }
 }
 
