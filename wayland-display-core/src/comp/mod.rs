@@ -62,7 +62,7 @@ use smithay::{
 };
 use std::sync::Mutex;
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     ffi::CString,
     sync::{Arc, mpsc::Sender},
     time::{Duration, Instant},
@@ -84,6 +84,7 @@ use crate::utils::allocator::{
 };
 use crate::utils::device::gpu::GPUDevice;
 use crate::utils::renderer::setup_renderer;
+use crate::wayland::protocols::color_management::{HdrMetadata, create_color_management_global};
 use crate::{utils::RenderTarget, wayland::protocols::wl_drm::create_drm_global};
 
 #[derive(Debug, Default)]
@@ -140,6 +141,8 @@ pub struct State {
     viewporter_state: ViewporterState,
     cursor_event_count: i32,
     pub single_pixel_buffer_state: SinglePixelBufferState,
+    pub surface_hdr_metadata:
+        HashMap<smithay::reexports::wayland_server::protocol::wl_surface::WlSurface, HdrMetadata>,
 }
 
 impl State {
@@ -163,6 +166,8 @@ impl State {
         let shell_state = XdgShellState::new::<State>(&dh);
         let viewporter_state = ViewporterState::new::<State>(&dh);
         let single_pixel_buffer_state = SinglePixelBufferState::new::<Self>(&dh);
+
+        let _ = create_color_management_global::<Self>(&dh);
 
         let render_node: Option<DrmNode> = render_target.clone().into();
 
@@ -284,6 +289,7 @@ impl State {
             shm_state,
             viewporter_state,
             single_pixel_buffer_state,
+            surface_hdr_metadata: HashMap::new(),
         }
     }
 }
