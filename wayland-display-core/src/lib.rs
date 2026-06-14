@@ -24,6 +24,7 @@ pub mod utils;
 pub(crate) mod wayland;
 
 pub use crate::utils::video_info::GstVideoInfo;
+pub use crate::wayland::protocols::color_management::HdrMetadata;
 
 pub enum Command {
     InputDevice(String),
@@ -41,6 +42,7 @@ pub enum Command {
     PointerAxis(f64, f64),
     GetSupportedDmaFormats(SyncSender<FormatSet>),
     GetRenderDevice(SyncSender<Option<GPUDevice>>),
+    GetHdrMetadata(SyncSender<Option<HdrMetadata>>),
     TouchDown(u32, Point<f64, Logical>),
     TouchUp(u32),
     TouchMotion(u32, Point<f64, Logical>),
@@ -282,6 +284,15 @@ impl WaylandDisplay {
         let (buffer_tx, buffer_rx) = mpsc::sync_channel(0);
         let _ = self.command_tx.send(Command::GetRenderDevice(buffer_tx));
         buffer_rx.recv().unwrap()
+    }
+
+    /// Query the HDR image-description metadata (if any) the active fullscreen
+    /// surface has attached via color-management-v1. Used downstream to drive
+    /// HDR10 signaling (colorimetry, HEVC SEI, Moonlight HDR mode).
+    pub fn get_hdr_metadata(&self) -> Option<HdrMetadata> {
+        let (buffer_tx, buffer_rx) = mpsc::sync_channel(0);
+        let _ = self.command_tx.send(Command::GetHdrMetadata(buffer_tx));
+        buffer_rx.recv().unwrap_or(None)
     }
 }
 

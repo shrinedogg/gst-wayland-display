@@ -143,6 +143,12 @@ pub struct State {
     pub single_pixel_buffer_state: SinglePixelBufferState,
     pub surface_hdr_metadata:
         HashMap<smithay::reexports::wayland_server::protocol::wl_surface::WlSurface, HdrMetadata>,
+    /// Custom BT.709->BT.2020 + PQ texture shader (None if compilation failed;
+    /// HDR output is then disabled and the SDR path is used).
+    pub(crate) pq_program: Option<smithay::backend::renderer::gles::GlesTexProgram>,
+    /// Intermediate composite texture (+ its size) for the HDR two-pass render.
+    pub(crate) hdr_intermediate:
+        Option<(smithay::backend::renderer::gles::GlesTexture, Size<i32, Physical>)>,
 }
 
 impl State {
@@ -172,6 +178,7 @@ impl State {
         let render_node: Option<DrmNode> = render_target.clone().into();
 
         let mut renderer = setup_renderer(render_node);
+        let pq_program = compile_pq_program(&mut renderer);
 
         let shm_state = ShmState::new::<State>(&dh, vec![]);
         let dmabuf_global = if let RenderTarget::Hardware(node) = render_target {
@@ -290,6 +297,8 @@ impl State {
             viewporter_state,
             single_pixel_buffer_state,
             surface_hdr_metadata: HashMap::new(),
+            pq_program,
+            hdr_intermediate: None,
         }
     }
 }
@@ -693,6 +702,20 @@ pub(crate) fn init(
                     if let Err(err) = sender.send(render_device) {
                         tracing::warn!(?err, "Failed to send render device.");
                     }
+                }
+                Event::Msg(Command::GetHdrMetadata(sender)) => {
+                    // Report the HDR metadata of the active (fullscreen) surface,
+                    // if any client attached one via color-management-v1.
+                    let meta = {
+                        let map = &state.surface_hdr_metadata;
+                        state
+                            .space
+                            .elements()
+                            .find_map(|window| {
+                                map.get(window.toplevel()?.wl_surface()).copied()
+                            })
+                    };
+                    let _ = sender.send(meta);
                 }
                 Event::Msg(Command::TouchDown(id, rel_position)) => {
                     let time: Duration = state.clock.now().into();
