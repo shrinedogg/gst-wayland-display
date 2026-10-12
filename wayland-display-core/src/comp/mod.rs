@@ -12,7 +12,7 @@ use smithay::wayland::single_pixel_buffer::SinglePixelBufferState;
 use smithay::{
     backend::{
         allocator::{Fourcc, dmabuf::Dmabuf},
-        drm::DrmNode,
+        drm::{DrmDeviceFd, DrmNode},
         libinput::LibinputInputBackend,
         renderer::{
             Bind,
@@ -45,10 +45,11 @@ use smithay::{
             backend::{ClientData, ClientId, DisconnectReason, GlobalId},
         },
     },
-    utils::{Clock, Logical, Monotonic, Physical, Point, Rectangle, Size, Transform},
+    utils::{Clock, DeviceFd, Logical, Monotonic, Physical, Point, Rectangle, Size, Transform},
     wayland::{
         compositor::{CompositorClientState, CompositorState, with_states},
         dmabuf::{DmabufGlobal, DmabufState},
+        drm_syncobj::{DrmSyncobjState, supports_syncobj_eventfd},
         output::OutputManagerState,
         pointer_constraints::PointerConstraintsState,
         presentation::PresentationState,
@@ -60,6 +61,7 @@ use smithay::{
         viewporter::ViewporterState,
     },
 };
+use std::os::fd::OwnedFd;
 use std::sync::Mutex;
 use std::{
     collections::{HashMap, HashSet},
@@ -120,6 +122,10 @@ pub struct State {
     pub(crate) pointer_location: Point<f64, Logical>,
     pub(crate) pointer_absolute_location: Point<f64, Logical>,
     last_pointer_movement: Instant,
+    /// Edge trigger for a forced wl_pointer refocus. Set at initial toplevel map,
+    /// consumed by the next `pointer_motion()` that has a surface under the pointer;
+    /// see `comp::input::pointer_motion`.
+    pub(crate) pending_pointer_refocus: bool,
     cursor_element: MemoryRenderBuffer,
     pub cursor_state: CursorImageStatus,
     surpressed_keys: HashSet<u32>,
@@ -129,6 +135,7 @@ pub struct State {
     // wayland state
     pub dh: DisplayHandle,
     pub compositor_state: CompositorState,
+    pub drm_syncobj_state: Option<DrmSyncobjState>,
     pub data_device_state: DataDeviceState,
     pub dmabuf_state: DmabufState,
     output_state: OutputManagerState,
@@ -241,6 +248,42 @@ impl State {
             None
         };
 
+        let drm_syncobj_state = if let RenderTarget::Hardware(node) = render_target {
+            match node.dev_path() {
+                Some(path) => match std::fs::OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .open(&path)
+                {
+                    Ok(file) => {
+                        let device_fd = DrmDeviceFd::new(DeviceFd::from(OwnedFd::from(file)));
+                        if supports_syncobj_eventfd(&device_fd) {
+                            tracing::info!("Enabling explicit sync (linux-drm-syncobj-v1)");
+                            Some(DrmSyncobjState::new::<State>(&dh, device_fd))
+                        } else {
+                            tracing::warn!(
+                                "DRM device does not support syncobj eventfd; explicit sync disabled"
+                            );
+                            None
+                        }
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            ?err,
+                            "Failed to open render node for syncobj; explicit sync disabled"
+                        );
+                        None
+                    }
+                },
+                None => {
+                    tracing::warn!("Render node has no device path; explicit sync disabled");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         let cursor_element = MemoryRenderBuffer::from_memory(
             MemoryBuffer::from_slice(CURSOR_DATA_BYTES, Fourcc::Abgr8888, (64, 64)),
             1,
@@ -276,6 +319,7 @@ impl State {
             pointer_location: (0., 0.).into(),
             pointer_absolute_location: (0., 0.).into(),
             last_pointer_movement: Instant::now(),
+            pending_pointer_refocus: false,
             cursor_element,
             cursor_state: CursorImageStatus::default_named(),
             cursor_event_count: 0,
@@ -285,6 +329,7 @@ impl State {
 
             dh: dh.clone(),
             compositor_state,
+            drm_syncobj_state,
             data_device_state,
             dmabuf_state,
             output_state,
