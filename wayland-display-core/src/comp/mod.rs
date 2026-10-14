@@ -108,7 +108,7 @@ pub struct State {
     // render
     pub(crate) dtr: Option<OutputDamageTracker>,
     pub(crate) output_buffer: Option<GsBufferType>,
-    render_node: Option<DrmNode>,
+    pub(crate) render_node: Option<DrmNode>,
     pub renderer: GlesRenderer,
     dmabuf_global: Option<(DmabufGlobal, Option<GlobalId>)>,
     last_render: Option<Instant>,
