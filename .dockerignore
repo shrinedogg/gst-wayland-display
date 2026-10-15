@@ -1,0 +1,6 @@
+.git
+target
+**/target
+.devcontainer
+hdr-overlay.Dockerfile
+.dockerignore

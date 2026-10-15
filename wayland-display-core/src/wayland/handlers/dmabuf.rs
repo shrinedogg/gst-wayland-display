@@ -92,7 +92,7 @@ impl DmabufHandler for State {
                 {
                     use smithay::backend::allocator::dmabuf::{Dmabuf, DmabufFlags};
                     use smithay::backend::allocator::Modifier;
-                    use std::os::fd::AsRawFd;
+                    use std::os::fd::{AsRawFd, FromRawFd};
 
                     let w = dmabuf.width();
                     let h = dmabuf.height();
@@ -115,26 +115,19 @@ impl DmabufHandler for State {
                                 let mut ok = true;
                                 for (i, hdl) in dmabuf.handles().enumerate() {
                                     let off = dmabuf.offsets().nth(i).unwrap_or(0);
-                                    // dup via /proc/self/fd (no libc dep); needs
-                                    // read+write on dma-buf fds
-                                    match std::fs::OpenOptions::new()
-                                        .read(true)
-                                        .write(true)
-                                        .open(format!("/proc/self/fd/{}", hdl.as_raw_fd()))
-                                    {
-                                        Ok(f) => {
-                                            let owned: std::os::fd::OwnedFd = f.into();
-                                            if !b.add_plane(owned, i as u32, off, if i == 0 { stride } else { dmabuf.strides().nth(i).unwrap_or(stride) }) {
-                                                tracing::warn!(stride, "retry: add_plane failed");
-                                                ok = false;
-                                                break;
-                                            }
-                                        }
-                                        Err(e) => {
-                                            tracing::warn!(fd = hdl.as_raw_fd(), error = ?e, "retry: fd dup failed");
-                                            ok = false;
-                                            break;
-                                        }
+                                    // dup(2): dma-buf fds cannot be reopened via
+                                    // /proc/self/fd (no open fop -> ENXIO)
+                                    let raw = unsafe { libc::dup(hdl.as_raw_fd()) };
+                                    if raw < 0 {
+                                        tracing::warn!(fd = hdl.as_raw_fd(), errno = unsafe { *libc::__errno_location() }, "retry: dup failed");
+                                        ok = false;
+                                        break;
+                                    }
+                                    let owned = unsafe { std::os::fd::OwnedFd::from_raw_fd(raw) };
+                                    if !b.add_plane(owned, i as u32, off, if i == 0 { stride } else { dmabuf.strides().nth(i).unwrap_or(stride) }) {
+                                        tracing::warn!(stride, "retry: add_plane failed");
+                                        ok = false;
+                                        break;
                                     }
                                 }
                                 if !ok {

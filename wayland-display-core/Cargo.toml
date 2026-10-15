@@ -21,6 +21,7 @@ gst.workspace = true
 gst-video.workspace = true
 tracing.workspace = true
 once_cell.workspace = true
+libc = "0.2"
 wayland-backend = "0.3.15"
 wayland-server = { version = "0.31.13", features = ["libwayland_1_23"] }
 wayland-scanner = "0.31.10"
