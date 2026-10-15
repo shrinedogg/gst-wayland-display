@@ -189,10 +189,43 @@ impl State {
 
         let shm_state = ShmState::new::<State>(&dh, vec![]);
         let dmabuf_global = if let RenderTarget::Hardware(node) = render_target {
+            // Client-facing dmabuf format advertisement. The renderer's full
+            // set includes 10-bit packed RGB (XB30/AB30/XR30/AR30/BA30/RA30),
+            // which NVIDIA EGL on driver 615.78.08 advertises as importable but
+            // then rejects (EGL_BAD_ALLOC "could not bind to DMA buffer") when
+            // the buffer was allocated by Vulkan: gamescope's Wayland backend
+            // prefers XBGR2101010 output whenever it is advertised, so every
+            // gamescope output image failed to import and the client died.
+            // GBM-allocated 10-bit buffers and 8-bit Vulkan buffers import
+            // fine, and wolf's own 10-bit producer path does not go through
+            // this client import, so hide 10-bit RGB from clients unless
+            // GST_WAYLAND_DISPLAY_CLIENT_10BIT=1 explicitly opts back in.
+            let client_10bit = std::env::var("GST_WAYLAND_DISPLAY_CLIENT_10BIT")
+                .map(|v| matches!(v.trim(), "1" | "true" | "yes" | "on"))
+                .unwrap_or(false);
             let formats = Bind::<Dmabuf>::supported_formats(&renderer)
                 .expect("Failed to query formats")
                 .into_iter()
+                .filter(|f| {
+                    client_10bit
+                        || !matches!(
+                            f.code,
+                            smithay::backend::allocator::Fourcc::Xbgr2101010
+                                | smithay::backend::allocator::Fourcc::Abgr2101010
+                                | smithay::backend::allocator::Fourcc::Xrgb2101010
+                                | smithay::backend::allocator::Fourcc::Argb2101010
+                                | smithay::backend::allocator::Fourcc::Bgra1010102
+                                | smithay::backend::allocator::Fourcc::Rgba1010102
+                                | smithay::backend::allocator::Fourcc::Bgrx1010102
+                                | smithay::backend::allocator::Fourcc::Rgbx1010102
+                        )
+                })
                 .collect::<Vec<_>>();
+            if !client_10bit {
+                tracing::info!(
+                    "Hiding 10-bit RGB dmabuf formats from clients (NVIDIA Vulkan XB30 import failure); set GST_WAYLAND_DISPLAY_CLIENT_10BIT=1 to advertise them"
+                );
+            }
 
             let dmabuf_default_feedback =
                 DmabufFeedbackBuilder::new(node.dev_id(), formats.clone()).build();
