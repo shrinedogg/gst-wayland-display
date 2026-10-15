@@ -84,7 +84,13 @@ impl DmabufHandler for State {
                     }
                 }
 
-                notifier.failed();
+                // DEBUG_ACCEPT (2026-10-15): report success to the client
+                // even though the import failed. The buffer will render
+                // garbage/black, but the client (gamescope) stays alive
+                // instead of crashlooping, so its dmabuf fds can be
+                // introspected live. REVERT after diagnosis.
+                tracing::warn!("DEBUG_ACCEPT: reporting import success despite failure");
+                let _ = notifier.successful::<State>();
             }
         }
     }
