@@ -115,16 +115,23 @@ impl DmabufHandler for State {
                                 let mut ok = true;
                                 for (i, hdl) in dmabuf.handles().enumerate() {
                                     let off = dmabuf.offsets().nth(i).unwrap_or(0);
-                                    // dup via /proc/self/fd (no libc dep)
-                                    match std::fs::File::open(format!("/proc/self/fd/{}", hdl.as_raw_fd())) {
+                                    // dup via /proc/self/fd (no libc dep); needs
+                                    // read+write on dma-buf fds
+                                    match std::fs::OpenOptions::new()
+                                        .read(true)
+                                        .write(true)
+                                        .open(format!("/proc/self/fd/{}", hdl.as_raw_fd()))
+                                    {
                                         Ok(f) => {
                                             let owned: std::os::fd::OwnedFd = f.into();
                                             if !b.add_plane(owned, i as u32, off, if i == 0 { stride } else { dmabuf.strides().nth(i).unwrap_or(stride) }) {
+                                                tracing::warn!(stride, "retry: add_plane failed");
                                                 ok = false;
                                                 break;
                                             }
                                         }
-                                        Err(_) => {
+                                        Err(e) => {
+                                            tracing::warn!(fd = hdl.as_raw_fd(), error = ?e, "retry: fd dup failed");
                                             ok = false;
                                             break;
                                         }
